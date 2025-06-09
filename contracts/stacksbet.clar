@@ -328,3 +328,126 @@
     )
   )
 )
+
+;; Get Current Platform Statistics
+;; Returns overall platform metrics and configuration
+(define-read-only (get-platform-stats)
+  {
+    total-markets: (var-get market-counter),
+    total-volume: (var-get total-volume),
+    minimum-stake: (var-get minimum-stake),
+    platform-fee-rate: (var-get platform-fee-rate),
+    oracle-address: (var-get oracle-address),
+    contract-balance: (stx-get-balance (as-contract tx-sender)),
+  }
+)
+
+;; Get User Performance Statistics
+;; Returns comprehensive user performance metrics
+(define-read-only (get-user-performance (user-address principal))
+  (map-get? user-stats user-address)
+)
+
+;; Check Market Status and Eligibility
+;; Determines if market is accepting predictions
+(define-read-only (get-market-status (market-id uint))
+  (let (
+      (market-data (unwrap! (map-get? markets market-id) (err "Market not found")))
+      (current-block stacks-block-height)
+    )
+    (ok {
+      is-active: (and
+        (>= current-block (get start-block market-data))
+        (< current-block (get end-block market-data))
+        (not (get resolved market-data))
+      ),
+      is-resolved: (get resolved market-data),
+      blocks-remaining: (if (< current-block (get end-block market-data))
+        (- (get end-block market-data) current-block)
+        u0
+      ),
+    })
+  )
+)
+
+;; ADMINISTRATIVE FUNCTIONS - PLATFORM MANAGEMENT
+
+;; Update Authorized Oracle Address
+;; Changes the oracle address authorized to resolve prediction markets
+(define-public (update-oracle-address (new-oracle-address principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (ok (var-set oracle-address new-oracle-address))
+  )
+)
+
+;; Adjust Minimum Stake Requirements
+;; Updates the minimum STX amount required for predictions
+(define-public (update-minimum-stake (new-minimum-amount uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> new-minimum-amount u0) ERR-INVALID-PARAMETER)
+    (asserts! (<= new-minimum-amount u100000000) ERR-INVALID-PARAMETER) ;; Max 100 STX
+    (ok (var-set minimum-stake new-minimum-amount))
+  )
+)
+
+;; Modify Platform Fee Structure
+;; Updates the platform fee percentage within acceptable limits
+(define-public (update-platform-fee (new-fee-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (<= new-fee-rate u1000) ERR-INVALID-PARAMETER) ;; Maximum 10%
+    (ok (var-set platform-fee-rate new-fee-rate))
+  )
+)
+
+;; Withdraw Accumulated Platform Fees
+;; Allows contract owner to withdraw earned platform fees
+(define-public (withdraw-platform-fees (withdrawal-amount uint))
+  (let ((contract-balance (stx-get-balance (as-contract tx-sender))))
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (<= withdrawal-amount contract-balance) ERR-INSUFFICIENT-BALANCE)
+    (asserts! (> withdrawal-amount u0) ERR-INVALID-PARAMETER)
+    (try! (as-contract (stx-transfer? withdrawal-amount (as-contract tx-sender) CONTRACT-OWNER)))
+    (ok withdrawal-amount)
+  )
+)
+
+;; PRIVATE UTILITY FUNCTIONS
+
+;; Update User Statistical Data
+;; Internal function to maintain user participation statistics
+(define-private (update-user-stats
+    (user-address principal)
+    (stake-amount uint)
+  )
+  (let ((current-stats (default-to {
+      total-predictions: u0,
+      total-staked: u0,
+      total-won: u0,
+      win-rate: u0,
+    }
+      (map-get? user-stats user-address)
+    )))
+    (map-set user-stats user-address {
+      total-predictions: (+ (get total-predictions current-stats) u1),
+      total-staked: (+ (get total-staked current-stats) stake-amount),
+      total-won: (get total-won current-stats),
+      win-rate: (get win-rate current-stats),
+    })
+  )
+)
+
+;; Update User Win Statistics
+;; Internal function to update win-related statistics
+(define-private (update-user-win-stats
+    (user-address principal)
+    (payout-amount uint)
+  )
+  (let ((current-stats (unwrap-panic (map-get? user-stats user-address))))
+    (map-set user-stats user-address
+      (merge current-stats { total-won: (+ (get total-won current-stats) payout-amount) })
+    )
+  )
+)
