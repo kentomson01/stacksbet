@@ -87,3 +87,130 @@
     win-rate: uint, ;; Win percentage (basis points)
   }
 )
+
+;; PUBLIC FUNCTIONS - MARKET MANAGEMENT
+
+;; Create New Bitcoin Price Prediction Market
+;; Initializes a new prediction market with specified parameters and validation
+(define-public (create-market
+    (start-price uint)
+    (start-block uint)
+    (end-block uint)
+  )
+  (let (
+      (new-market-id (var-get market-counter))
+      (current-block stacks-block-height)
+    )
+    ;; Authorization and parameter validation
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
+    (asserts! (> end-block start-block) ERR-INVALID-PARAMETER)
+    (asserts! (> start-price u0) ERR-INVALID-PARAMETER)
+    (asserts! (>= start-block current-block) ERR-INVALID-PARAMETER)
+    (asserts! (> (- end-block start-block) u10) ERR-INVALID-PARAMETER)
+    ;; Minimum 10 block duration
+    ;; Initialize market with comprehensive data structure
+    (map-set markets new-market-id {
+      start-price: start-price,
+      end-price: u0,
+      total-up-stake: u0,
+      total-down-stake: u0,
+      start-block: start-block,
+      end-block: end-block,
+      resolution-block: u0,
+      resolved: false,
+      creator: tx-sender,
+    })
+    ;; Increment global counter for next market
+    (var-set market-counter (+ new-market-id u1))
+    (ok new-market-id)
+  )
+)
+
+;; Oracle-Driven Market Resolution
+;; Authorized oracle resolves market with final Bitcoin price for settlement
+(define-public (resolve-market
+    (market-id uint)
+    (final-price uint)
+  )
+  (let (
+      (market-data (unwrap! (map-get? markets market-id) ERR-NOT-FOUND))
+      (current-block stacks-block-height)
+    )
+    ;; Oracle authorization and timing validation
+    (asserts! (is-eq tx-sender (var-get oracle-address)) ERR-UNAUTHORIZED-ORACLE)
+    (asserts! (>= current-block (get end-block market-data)) ERR-MARKET-CLOSED)
+    (asserts! (not (get resolved market-data)) ERR-MARKET-CLOSED)
+    (asserts! (> final-price u0) ERR-INVALID-PARAMETER)
+    ;; Update market with resolution data
+    (map-set markets market-id
+      (merge market-data {
+        end-price: final-price,
+        resolution-block: current-block,
+        resolved: true,
+      })
+    )
+    (ok true)
+  )
+)
+
+;; PUBLIC FUNCTIONS - USER PARTICIPATION
+
+;; Submit Price Prediction with Stake
+;; Allows users to stake STX tokens on Bitcoin price direction within active markets
+(define-public (make-prediction
+    (market-id uint)
+    (prediction-direction (string-ascii 4))
+    (stake-amount uint)
+  )
+  (let (
+      (market-data (unwrap! (map-get? markets market-id) ERR-NOT-FOUND))
+      (current-block stacks-block-height)
+      (user-balance (stx-get-balance tx-sender))
+    )
+    ;; Market timing and parameter validation
+    (asserts!
+      (and
+        (>= current-block (get start-block market-data))
+        (< current-block (get end-block market-data))
+      )
+      ERR-MARKET-CLOSED
+    )
+    (asserts!
+      (or (is-eq prediction-direction "up") (is-eq prediction-direction "down"))
+      ERR-INVALID-PREDICTION
+    )
+    (asserts! (>= stake-amount (var-get minimum-stake)) ERR-INVALID-PARAMETER)
+    (asserts! (<= stake-amount user-balance) ERR-INSUFFICIENT-BALANCE)
+    ;; Execute STX transfer to contract for escrow
+    (try! (stx-transfer? stake-amount tx-sender (as-contract tx-sender)))
+    ;; Record comprehensive user prediction data
+    (map-set user-predictions {
+      market-id: market-id,
+      user: tx-sender,
+    } {
+      prediction-type: prediction-direction,
+      stake-amount: stake-amount,
+      timestamp: current-block,
+      claimed: false,
+      potential-payout: u0,
+    })
+    ;; Update market stake totals for proper pool calculation
+    (map-set markets market-id
+      (merge market-data {
+        total-up-stake: (if (is-eq prediction-direction "up")
+          (+ (get total-up-stake market-data) stake-amount)
+          (get total-up-stake market-data)
+        ),
+        total-down-stake: (if (is-eq prediction-direction "down")
+          (+ (get total-down-stake market-data) stake-amount)
+          (get total-down-stake market-data)
+        ),
+      })
+    )
+    ;; Update platform volume tracking
+    (var-set total-volume (+ (var-get total-volume) stake-amount))
+    ;; Update user statistics
+    (update-user-stats tx-sender stake-amount)
+    (ok true)
+  )
+)
