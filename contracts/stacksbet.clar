@@ -1,0 +1,89 @@
+;; Title: StacksBet - Decentralized Bitcoin Price Oracle & Prediction Markets
+;; Summary: A trustless, community-driven prediction platform built on Stacks Layer 2
+;;          enabling users to stake STX on Bitcoin price movements with automated
+;;          settlement and transparent reward distribution.
+;;
+;; Description: StacksBet revolutionizes Bitcoin prediction markets by leveraging 
+;;              Stacks' unique Bitcoin-native capabilities. Users can participate 
+;;              in time-bound prediction rounds, staking STX tokens on Bitcoin's 
+;;              price direction. Our oracle-based settlement system ensures fair, 
+;;              automated payouts while maintaining full decentralization. Winners 
+;;              receive proportional rewards from the total pool, creating an 
+;;              engaging and profitable DeFi experience directly tied to Bitcoin's 
+;;              market dynamics.
+;;
+;; Features:- Oracle-driven price feeds for accurate settlement
+;;          - Proportional reward distribution among winners  
+;;          - Configurable market parameters and fee structures
+;;          - Anti-manipulation safeguards and minimum stake requirements
+;;          - Full Bitcoin Layer 2 integration via Stacks blockchain
+
+;; CONSTANTS & ERROR HANDLING
+
+;; Administrative Constants
+(define-constant CONTRACT-OWNER tx-sender)
+(define-constant MAX-FEE-PERCENTAGE u10) ;; 10% maximum platform fee
+
+;; Comprehensive Error Code System
+(define-constant ERR-OWNER-ONLY (err u100))
+(define-constant ERR-NOT-FOUND (err u101))
+(define-constant ERR-INVALID-PREDICTION (err u102))
+(define-constant ERR-MARKET-CLOSED (err u103))
+(define-constant ERR-ALREADY-CLAIMED (err u104))
+(define-constant ERR-INSUFFICIENT-BALANCE (err u105))
+(define-constant ERR-INVALID-PARAMETER (err u106))
+(define-constant ERR-MARKET-NOT-RESOLVED (err u107))
+(define-constant ERR-UNAUTHORIZED-ORACLE (err u108))
+
+;; STATE VARIABLES & CONFIGURATION
+
+;; Platform Configuration Variables
+(define-data-var oracle-address principal 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
+(define-data-var minimum-stake uint u1000000) ;; 1 STX minimum (1,000,000 microSTX)
+(define-data-var platform-fee-rate uint u250) ;; 2.5% platform fee (250 basis points)
+(define-data-var market-counter uint u0) ;; Global market identifier counter
+(define-data-var total-volume uint u0) ;; Cumulative platform volume tracking
+
+;; CORE DATA STRUCTURES
+
+;; Market State Management
+(define-map markets
+  uint ;; market-id
+  {
+    start-price: uint, ;; Bitcoin price at market open (satoshis)
+    end-price: uint, ;; Bitcoin price at resolution (satoshis)
+    total-up-stake: uint, ;; Total STX staked on bullish predictions
+    total-down-stake: uint, ;; Total STX staked on bearish predictions
+    start-block: uint, ;; Block height when predictions open
+    end-block: uint, ;; Block height when predictions close
+    resolution-block: uint, ;; Block height when market was resolved
+    resolved: bool, ;; Market resolution status flag
+    creator: principal, ;; Market creator address
+  }
+)
+
+;; User Participation Tracking
+(define-map user-predictions
+  {
+    market-id: uint,
+    user: principal,
+  }
+  {
+    prediction-type: (string-ascii 4), ;; "up" or "down" direction
+    stake-amount: uint, ;; STX amount staked (microSTX)
+    timestamp: uint, ;; Block height of prediction
+    claimed: bool, ;; Reward claim status
+    potential-payout: uint, ;; Calculated potential winnings
+  }
+)
+
+;; User Statistics Tracking
+(define-map user-stats
+  principal
+  {
+    total-predictions: uint, ;; Total number of predictions made
+    total-staked: uint, ;; Lifetime STX staked
+    total-won: uint, ;; Total winnings claimed
+    win-rate: uint, ;; Win percentage (basis points)
+  }
+)
